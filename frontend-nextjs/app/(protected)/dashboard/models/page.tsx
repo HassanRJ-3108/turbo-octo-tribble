@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import useSWR from "swr";
 import axios from "axios";
 import { Upload, Trash2, Eye } from "lucide-react";
@@ -16,8 +16,7 @@ const apiClient = axios.create({
 });
 
 export default function ModelsPage() {
-  const { getToken } = useAuth();
-  const [token, setToken] = useState<string | null>(null);
+  const { getToken, isLoaded } = useAuth();
   const [uploading, setUploading] = useState(false);
   const [formData, setFormData] = useState({
     name: "",
@@ -28,16 +27,15 @@ export default function ModelsPage() {
   });
   const [file, setFile] = useState<File | null>(null);
 
-  useEffect(() => {
-    getToken().then(setToken);
-  }, [getToken]);
+  // Token is fetched fresh before each API call — no stale state
 
   const { data: models = [], mutate } = useSWR<Model3D[]>(
-    token ? "/models" : null,
+    isLoaded ? "/models" : null,
     async (url: any) => {
+      const freshToken = await getToken();
       const res = await apiClient.get(url, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${freshToken}`,
           "ngrok-skip-browser-warning": "true",
         },
       });
@@ -47,10 +45,18 @@ export default function ModelsPage() {
 
   const handleUpload = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!file || !token) return;
+    if (!file) return;
 
     setUploading(true);
     try {
+      // Get a FRESH token right before upload (old token may have expired for large files)
+      const freshToken = await getToken();
+      if (!freshToken) {
+        console.error("No auth token available");
+        setUploading(false);
+        return;
+      }
+
       const formDataFile = new FormData();
       formDataFile.append("file", file);
       formDataFile.append("name", formData.name);
@@ -62,7 +68,7 @@ export default function ModelsPage() {
 
       await apiClient.post("/models", formDataFile, {
         headers: {
-          Authorization: `Bearer ${token}`,
+          Authorization: `Bearer ${freshToken}`,
           "Content-Type": "multipart/form-data",
         },
       });
@@ -78,10 +84,10 @@ export default function ModelsPage() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!token) return;
     try {
+      const freshToken = await getToken();
       await apiClient.delete(`/models/${id}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${freshToken}` },
       });
       mutate();
     } catch (error) {
