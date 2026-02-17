@@ -1,7 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useState, useRef, useMemo } from "react";
+import { useState, useRef, useMemo, useEffect } from "react";
 import useSWR from "swr";
 import axios from "axios";
 import Link from "next/link";
@@ -30,6 +30,14 @@ const ARProductCarousel = dynamic(
   }
 );
 
+const FullScreen3DViewer = dynamic(
+  () => import("@/components/FullScreen3DViewer"),
+  {
+    ssr: false,
+    loading: () => null,
+  }
+);
+
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_API_URL ||
   "https://chorionic-officiously-theron.ngrok-free.dev/api/v1";
@@ -46,7 +54,25 @@ export default function PublicMenuPage() {
   const [arProductIndex, setARProductIndex] = useState(0);
   const [isPlaced, setIsPlaced] = useState(false);
   const [arError, setArError] = useState<string | null>(null);
+  const [isARSupported, setIsARSupported] = useState<boolean | null>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
+
+  // Detect AR support on mount
+  useEffect(() => {
+    const checkAR = async () => {
+      if ("xr" in navigator && navigator.xr) {
+        try {
+          const supported = await navigator.xr.isSessionSupported("immersive-ar");
+          setIsARSupported(supported);
+        } catch {
+          setIsARSupported(false);
+        }
+      } else {
+        setIsARSupported(false);
+      }
+    };
+    checkAR();
+  }, []);
 
   const { data: menu, error } = useSWR<PublicMenu>(
     slug ? `/menu/${slug}` : null,
@@ -111,30 +137,48 @@ export default function PublicMenuPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-slate-950 via-slate-900 to-slate-950 text-slate-100">
-      {/* ===== AR MODE (Full-screen WebXR overlay) ===== */}
+      {/* ===== AR / 3D MODE (Full-screen overlay) ===== */}
       {isARMode && (
         <>
-          {/* DOM Overlay root for WebXR */}
-          <div ref={overlayRef} className="fixed inset-0 z-50 bg-black">
-            <ARViewer
-              products={arProducts}
-              currentIndex={arProductIndex}
-              onClose={exitAR}
-              overlayRef={overlayRef}
-              onPlaced={() => setIsPlaced(true)}
-              onError={(msg) => {
-                setArError(msg);
-                setTimeout(() => setArError(null), 5000);
-              }}
-            />
-            <ARProductCarousel
-              products={arProducts}
-              currentIndex={arProductIndex}
-              onProductChange={setARProductIndex}
-              onClose={exitAR}
-              isPlaced={isPlaced}
-            />
-          </div>
+          {isARSupported ? (
+            /* Full WebXR AR for supported devices */
+            <div ref={overlayRef} className="fixed inset-0 z-50 bg-black">
+              <ARViewer
+                products={arProducts}
+                currentIndex={arProductIndex}
+                onClose={exitAR}
+                overlayRef={overlayRef}
+                onPlaced={() => setIsPlaced(true)}
+                onError={(msg) => {
+                  setArError(msg);
+                  setTimeout(() => setArError(null), 5000);
+                }}
+              />
+              <ARProductCarousel
+                products={arProducts}
+                currentIndex={arProductIndex}
+                onProductChange={setARProductIndex}
+                onClose={exitAR}
+                isPlaced={isPlaced}
+              />
+            </div>
+          ) : (
+            /* Full-screen 3D fallback for non-AR devices */
+            <div className="fixed inset-0 z-50">
+              <FullScreen3DViewer
+                products={arProducts}
+                currentIndex={arProductIndex}
+                onClose={exitAR}
+              />
+              <ARProductCarousel
+                products={arProducts}
+                currentIndex={arProductIndex}
+                onProductChange={setARProductIndex}
+                onClose={exitAR}
+                isPlaced={true}
+              />
+            </div>
+          )}
         </>
       )}
 
@@ -167,7 +211,7 @@ export default function PublicMenuPage() {
                   className="flex items-center gap-2 bg-gradient-to-r from-amber-500 to-orange-500 text-slate-950 px-4 py-2 rounded-lg font-semibold hover:from-amber-400 hover:to-orange-400 transition-all shadow-lg shadow-amber-500/20 text-sm"
                 >
                   <Smartphone className="w-4 h-4" />
-                  View in AR
+                  {isARSupported ? "View in AR" : "View in 3D"}
                 </button>
               )}
               <Link

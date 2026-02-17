@@ -46,6 +46,7 @@ export default function ARViewer({
     const modelCacheRef = useRef<Map<string, THREE.Group>>(new Map());
     const cleanedUpRef = useRef(false);
     const sessionStartedRef = useRef(false);
+    const isPlacedRef = useRef(false);
 
     const [isPlaced, setIsPlaced] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
@@ -144,6 +145,7 @@ export default function ARViewer({
 
             setIsLoading(false);
             setIsPlaced(true);
+            isPlacedRef.current = true;
             setStatusMessage("");
             onPlaced?.();
         },
@@ -345,8 +347,8 @@ export default function ARViewer({
                     const refSpace = renderer.xr.getReferenceSpace();
 
                     if (refSpace) {
-                        // Update reticle from hit-test
-                        if (hitTestSourceRef.current && !isPlaced) {
+                        // Update reticle from hit-test (only before first placement)
+                        if (hitTestSourceRef.current && !isPlacedRef.current) {
                             try {
                                 const hitTestResults = frame.getHitTestResults(
                                     hitTestSourceRef.current
@@ -362,10 +364,9 @@ export default function ARViewer({
                                     reticle.visible = false;
                                 }
                             } catch {
-                                // Silently handle hit-test errors per frame
                                 reticle.visible = false;
                             }
-                        } else if (isPlaced) {
+                        } else {
                             reticle.visible = false;
                         }
                     }
