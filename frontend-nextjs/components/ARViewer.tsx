@@ -178,8 +178,6 @@ export default function ARViewer({
         sessionStartedRef.current = true;
         cleanedUpRef.current = false;
 
-        let hitTestSourceRequested = false;
-
         // --- Check AR Support First ---
         const checkAndStart = async () => {
             // Check if WebXR is available
@@ -279,7 +277,7 @@ export default function ARViewer({
             try {
                 const sessionInit: XRSessionInit = {
                     requiredFeatures: ["hit-test"],
-                    optionalFeatures: ["dom-overlay"],
+                    optionalFeatures: ["dom-overlay", "local-floor", "local"],
                 };
 
                 if (overlayRef.current) {
@@ -300,7 +298,18 @@ export default function ARViewer({
 
                 sessionRef.current = session;
 
-                await renderer.xr.setSession(session);
+                // Set the XR session on the renderer (Three.js handles reference space internally)
+                try {
+                    await renderer.xr.setSession(session);
+                } catch (refErr: any) {
+                    console.error("Failed to set XR session on renderer:", refErr);
+                    setStatusMessage("AR setup failed — try updating Chrome");
+                    setIsLoading(false);
+                    onError?.("Failed to initialize AR renderer: " + (refErr?.message || "Unknown"));
+                    session.end().catch(() => { });
+                    setTimeout(() => { if (!cleanedUpRef.current) onClose(); }, 3000);
+                    return;
+                }
 
                 session.addEventListener("end", () => {
                     sessionRef.current = null;
@@ -309,6 +318,20 @@ export default function ARViewer({
                         onClose();
                     }
                 });
+
+                // --- Set up hit-test source ONCE here (not in animation loop) ---
+                try {
+                    const viewerSpace = await session.requestReferenceSpace("viewer");
+                    if (session.requestHitTestSource) {
+                        const source = await session.requestHitTestSource({ space: viewerSpace });
+                        if (source) {
+                            hitTestSourceRef.current = source;
+                        }
+                    }
+                } catch (hitErr) {
+                    console.warn("Hit-test source setup failed:", hitErr);
+                    // Non-fatal: AR will work but surface detection won't
+                }
 
                 setIsLoading(false);
                 setStatusMessage("Point your camera at a flat surface");
@@ -323,45 +346,31 @@ export default function ARViewer({
             }
 
             // --- Animation Loop ---
-            renderer.setAnimationLoop((timestamp, frame) => {
+            renderer.setAnimationLoop((_timestamp, frame) => {
                 if (cleanedUpRef.current) return;
 
                 if (frame) {
-                    const session = renderer.xr.getSession();
                     const refSpace = renderer.xr.getReferenceSpace();
 
-                    if (session && refSpace) {
-                        // Request hit-test source once
-                        if (!hitTestSourceRequested) {
-                            session
-                                .requestReferenceSpace("viewer")
-                                .then((viewerSpace) => {
-                                    if (session.requestHitTestSource) {
-                                        session
-                                            .requestHitTestSource({ space: viewerSpace })
-                                            ?.then((source) => {
-                                                if (source) {
-                                                    hitTestSourceRef.current = source;
-                                                }
-                                            });
-                                    }
-                                });
-                            hitTestSourceRequested = true;
-                        }
-
+                    if (refSpace) {
                         // Update reticle from hit-test
                         if (hitTestSourceRef.current && !isPlaced) {
-                            const hitTestResults = frame.getHitTestResults(
-                                hitTestSourceRef.current
-                            );
-                            if (hitTestResults.length > 0) {
-                                const hit = hitTestResults[0];
-                                const pose = hit.getPose(refSpace);
-                                if (pose) {
-                                    reticle.visible = true;
-                                    reticle.matrix.fromArray(pose.transform.matrix);
+                            try {
+                                const hitTestResults = frame.getHitTestResults(
+                                    hitTestSourceRef.current
+                                );
+                                if (hitTestResults.length > 0) {
+                                    const hit = hitTestResults[0];
+                                    const pose = hit.getPose(refSpace);
+                                    if (pose) {
+                                        reticle.visible = true;
+                                        reticle.matrix.fromArray(pose.transform.matrix);
+                                    }
+                                } else {
+                                    reticle.visible = false;
                                 }
-                            } else {
+                            } catch {
+                                // Silently handle hit-test errors per frame
                                 reticle.visible = false;
                             }
                         } else if (isPlaced) {
