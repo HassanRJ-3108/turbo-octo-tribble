@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(powershell:*)",
+      "Bash(git -C \"D:\\\\real-startup-foodar-pk\" rev-parse --git-dir)",
+      "Bash(test:*)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "supabase"
+  ]
+}

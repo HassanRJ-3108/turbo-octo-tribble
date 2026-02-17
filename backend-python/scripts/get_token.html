@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Get Clerk JWT</title>
+    <!-- Clerk JS SDK -->
+    <script
+      async
+      crossorigin="anonymous"
+      data-clerk-publishable-key="pk_test_c3RlcmxpbmctdHVya2V5LTQxLmNsZXJrLmFjY291bnRzLmRldiQ"
+      src="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@latest/dist/clerk.browser.js"
+      type="text/javascript"
+    ></script>
+    <style>
+        body { font-family: system-ui, -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 20px; line-height: 1.5; }
+        h1 { margin-bottom: 20px; }
+        button { background: #000; color: white; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 16px; margin-right: 10px; }
+        button:hover { opacity: 0.8; }
+        .token-box { background: #f0f0f0; padding: 15px; border-radius: 8px; word-break: break-all; margin-top: 20px; font-family: monospace; font-size: 14px; border: 1px solid #ddd; display: none; }
+        .success { color: green; margin-top: 10px; display: none; }
+    </style>
+</head>
+<body>
+    <h1>🔑 Get Your JWT Token</h1>
+    <p>Sign in to generate a JWT token for testing the API.</p>
+
+    <div id="auth-container">
+        <button onclick="Clerk.openSignIn()">Sign In</button>
+    </div>
+
+    <div id="user-container" style="display: none;">
+        <p>Signed in as: <strong id="user-email"></strong></p>
+        <button onclick="generateToken()">Generate Token & Copy</button>
+        <button onclick="Clerk.signOut()" style="background: #666;">Sign Out</button>
+        <div id="success-msg" class="success">✅ Token copied to clipboard!</div>
+        <div id="token-display" class="token-box"></div>
+    </div>
+
+    <script>
+        // Using your publishable key from .env
+        const pubKey = "pk_test_c3RlcmxpbmctdHVya2V5LTQxLmNsZXJrLmFjY291bnRzLmRldiQ";
+
+        window.addEventListener("load", async function () {
+            await Clerk.load({
+                publishableKey: pubKey
+            });
+
+            if (Clerk.user) {
+                showUser();
+            }
+
+            Clerk.addListener((payload) => {
+                if (payload.user) showUser();
+                else showSignIn();
+            });
+        });
+
+        function showUser() {
+            document.getElementById("auth-container").style.display = "none";
+            document.getElementById("user-container").style.display = "block";
+            document.getElementById("user-email").innerText = Clerk.user.primaryEmailAddress.emailAddress;
+        }
+
+        function showSignIn() {
+            document.getElementById("auth-container").style.display = "block";
+            document.getElementById("user-container").style.display = "none";
+            if (document.getElementById("token-display")) {
+                document.getElementById("token-display").style.display = "none";
+            }
+        }
+
+        async function generateToken() {
+            try {
+                // Get token from Clerk
+                const token = await Clerk.session.getToken();
+                
+                // Display token
+                const display = document.getElementById("token-display");
+                display.style.display = "block";
+                display.innerText = token;
+                
+                // Copy to clipboard
+                await navigator.clipboard.writeText(token);
+                
+                // Show success message
+                const msg = document.getElementById("success-msg");
+                msg.style.display = "block";
+                msg.innerText = "✅ Token copied to clipboard!";
+                
+                setTimeout(() => {
+                    msg.style.display = "none";
+                }, 3000);
+            } catch (e) {
+                alert("Error getting token: " + e.message);
+            }
+        }
+    </script>
+</body>
+</html>

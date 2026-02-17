@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "supabase": {
+      "type": "http",
+      "url": "https://mcp.supabase.com/mcp?project_ref=nbljljyilnpqukpnbcmi&features=storage%2Cbranching%2Cdevelopment%2Cfunctions%2Cdebugging%2Cdatabase%2Caccount%2Cdocs"
+    },
+    "clerk": {
+      "type": "http",
+      "url": "https://mcp.clerk.com/mcp"
+    }
+  }
+}
