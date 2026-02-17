@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     EMAIL_FROM_ADDRESS: str = "noreply@foodar.pk"
 
     # CORS Configuration
-    CORS_ORIGINS: str = "https://foodar.pk,https://www.foodar.pk,https://*.foodar.pk"
+    CORS_ORIGINS: str = "http://localhost:3000,http://localhost:3001,https://foodar.pk,https://www.foodar.pk,https://*.foodar.pk,https://timelinx.store,https://www.timelinx.store,https://*.timelinx.store"
 
     @property
     def parsed_cors_origins(self) -> List[str]:

@@ -25,9 +25,13 @@ app = FastAPI(
 )
 
 # CORS middleware configuration
+# Using regex to support wildcard subdomains which 'allow_origins' list doesn't handle
+origin_regex = r"^(http://localhost:\d+|https://(.+\.)?foodar\.pk|https://(.+\.)?timelinx\.store)$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.parsed_cors_origins,
+    allow_origins=settings.parsed_cors_origins, # Keep explicit list
+    allow_origin_regex=origin_regex,            # Add regex for wildcards
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

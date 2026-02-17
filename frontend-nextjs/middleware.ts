@@ -11,39 +11,53 @@ const isProtectedRoute = createRouteMatcher([
 export default clerkMiddleware(async (auth, req: NextRequest) => {
   // Handle wildcard subdomains for public menus
   const { hostname, pathname, search } = req.nextUrl;
-  
-  // Get the full subdomain
-  const parts = hostname.split(".");
-  
-  // Check if it's a subdomain request (not localhost:port)
+
+  // Custom domains handled by the app
+  const ROOT_DOMAINS = ["foodar.pk", "timelinx.store", "localhost:3000", "localhost"];
+
+  // Check if it's a subdomain request
   let subdomain: string | null = null;
-  
+
+  // Helper to extract subdomain
+  // Case 1: Localhost (e.g. restaurant.localhost:3000)
   if (hostname.includes("localhost") || hostname.includes("127.0.0.1")) {
-    // Local development: restaurant-slug.localhost:3000
-    if (parts.length >= 2 && parts[0] !== "localhost" && parts[0] !== "127") {
-      subdomain = parts[0];
-    }
-  } else if (!hostname.includes(":")) {
-    // Production: restaurant-slug.timeinx.store or restaurant-slug.foodar.pk
-    // Skip if it's main domain (www, app, admin, api)
-    const mainDomains = ["www", "app", "admin", "api", "mail", "blog"];
-    if (parts.length >= 2 && !mainDomains.includes(parts[0])) {
+    const parts = hostname.split(".");
+    if (parts.length > 1 && parts[0] !== "localhost" && parts[0] !== "127") {
       subdomain = parts[0];
     }
   }
-  
-  // If we have a subdomain, redirect to /menu/[slug]
-  if (subdomain && subdomain !== "www" && !pathname.startsWith("/menu/")) {
+  // Case 2: Production Domains (e.g. restaurant.timelinx.store)
+  else {
+    // Check if the hostname ENDS with any of our root domains
+    for (const root of ROOT_DOMAINS) {
+      if (hostname.endsWith(root) && hostname !== root) {
+        // It's a subdomain. Extract the part before the root.
+        // e.g. "gaming.timelinx.store" -> "gaming"
+        subdomain = hostname.replace(`.${root}`, "");
+        break;
+      }
+    }
+  }
+
+  // Skip special subdomains
+  const specialSubdomains = ["www", "app", "admin", "api", "mail", "blog"];
+  if (subdomain && specialSubdomains.includes(subdomain)) {
+    subdomain = null;
+  }
+
+  // If we have a subdomain, rewrite to /menu/[slug]
+  if (subdomain && !pathname.startsWith("/menu/")) {
+    // Rewrite internal URL to handle the request as a menu page
     return NextResponse.rewrite(
       new URL(`/menu/${subdomain}${pathname}${search}`, req.url)
     );
   }
-  
+
   // Protect dashboard and onboarding routes
   if (isProtectedRoute(req)) {
     await auth.protect();
   }
-  
+
   return NextResponse.next();
 });
 
