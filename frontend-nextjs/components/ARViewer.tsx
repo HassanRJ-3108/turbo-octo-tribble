@@ -95,14 +95,6 @@ export default function ARViewer({
                 model.position.sub(center);
                 model.position.y -= scaledBox.min.y;
 
-                // Enable shadows
-                model.traverse((child) => {
-                    if ((child as THREE.Mesh).isMesh) {
-                        child.castShadow = true;
-                        child.receiveShadow = true;
-                    }
-                });
-
                 // Cache the original
                 modelCacheRef.current.set(cacheKey, model.clone());
                 return model;
@@ -222,26 +214,26 @@ export default function ARViewer({
             );
             cameraRef.current = camera;
 
-            // --- Lighting ---
-            const ambientLight = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 3);
-            ambientLight.position.set(0.5, 1, 0.25);
+            // --- Lighting (lightweight for mobile) ---
+            const ambientLight = new THREE.AmbientLight(0xffffff, 2.5);
             scene.add(ambientLight);
 
-            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.5);
-            directionalLight.position.set(5, 10, 7.5);
-            directionalLight.castShadow = true;
-            directionalLight.shadow.mapSize.set(1024, 1024);
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
+            directionalLight.position.set(2, 5, 3);
+            // No shadows in AR — camera feed is the background, shadows aren't visible
             scene.add(directionalLight);
 
-            // --- Renderer ---
+            // --- Renderer (optimized for mobile AR) ---
             const renderer = new THREE.WebGLRenderer({
-                antialias: true,
+                antialias: false,      // MSAA is very expensive on mobile
                 alpha: true,
+                powerPreference: "high-performance",
             });
-            renderer.setPixelRatio(window.devicePixelRatio);
+            // Cap pixel ratio — phones report 3-4x which renders millions of extra pixels
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            renderer.shadowMap.enabled = true;
+            // No shadow maps — saves significant GPU per frame
 
             if (containerRef.current && !cleanedUpRef.current) {
                 containerRef.current.appendChild(renderer.domElement);
