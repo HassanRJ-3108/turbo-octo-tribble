@@ -13,7 +13,8 @@ import { loadModel as loadModelFromCache } from "@/lib/modelCache";
  * - Renders reticle on detected surfaces (hit-test)
  * - Places GLB 3D models at real-world scale
  * - Supports product switching without restarting session
- * - Tap anywhere to reposition (model moves to new surface point)
+ * - Finger drag to rotate placed model (360°)
+ * - Tap to place/reposition model
  * - No pinch-to-zoom (models are real-world size only)
  */
 
@@ -45,27 +46,44 @@ export default function ARViewer({
     const placementPoseRef = useRef<THREE.Matrix4 | null>(null);
     const cleanedUpRef = useRef(false);
     const sessionStartedRef = useRef(false);
-
-    // Use refs for values that need to be current inside XR callbacks
-    const currentIndexRef = useRef(currentIndex);
     const isPlacedRef = useRef(false);
+    const isLoadingRef = useRef(false);
+
+    // Refs for latest values (avoid stale closures in XR callbacks)
+    const currentIndexRef = useRef(currentIndex);
+    const productsRef = useRef(products);
+    const onPlacedRef = useRef(onPlaced);
+
+    // Touch rotation state
+    const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null);
+    const isTapRef = useRef(false); // distinguish tap vs drag
 
     const [isPlaced, setIsPlaced] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [statusMessage, setStatusMessage] = useState("Initializing AR...");
 
-    // Keep currentIndexRef in sync with prop
-    useEffect(() => {
-        currentIndexRef.current = currentIndex;
-    }, [currentIndex]);
+    // Keep refs in sync with latest props
+    useEffect(() => { currentIndexRef.current = currentIndex; }, [currentIndex]);
+    useEffect(() => { productsRef.current = products; }, [products]);
+    useEffect(() => { onPlacedRef.current = onPlaced; }, [onPlaced]);
 
     /**
-     * Place or replace the current model in the scene
+     * Place or replace the current model in the scene.
+     * Uses refs for products/index so it's never stale.
      */
-    const placeModel = useCallback(
-        async (productIndex: number, pose: THREE.Matrix4) => {
+    const placeModelAtPose = useCallback(
+        async (pose: THREE.Matrix4) => {
             const scene = sceneRef.current;
-            if (!scene) return;
+            if (!scene || isLoadingRef.current) return;
+
+            const productIndex = currentIndexRef.current;
+            const currentProducts = productsRef.current;
+            const product = currentProducts[productIndex];
+            if (!product) return;
+
+            isLoadingRef.current = true;
+            setIsLoading(true);
+            setStatusMessage("Loading model...");
 
             // Remove existing model
             if (currentModelRef.current) {
@@ -73,35 +91,41 @@ export default function ARViewer({
                 currentModelRef.current = null;
             }
 
-            const product = products[productIndex];
-            if (!product) return;
+            try {
+                const model = await loadModelFromCache(product);
+                if (!model || !scene || cleanedUpRef.current) {
+                    isLoadingRef.current = false;
+                    setIsLoading(false);
+                    return;
+                }
 
-            setIsLoading(true);
-            setStatusMessage("Loading model...");
+                // Apply placement pose
+                const position = new THREE.Vector3();
+                const quaternion = new THREE.Quaternion();
+                const scale = new THREE.Vector3();
+                pose.decompose(position, quaternion, scale);
 
-            const model = await loadModelFromCache(product);
-            if (!model || !scene || cleanedUpRef.current) return;
+                model.position.copy(position);
+                // Keep model upright — only use Y rotation from pose
+                model.quaternion.copy(quaternion);
 
-            // Apply placement pose
-            const position = new THREE.Vector3();
-            const quaternion = new THREE.Quaternion();
-            const scale = new THREE.Vector3();
-            pose.decompose(position, quaternion, scale);
+                scene.add(model);
+                currentModelRef.current = model;
+                placementPoseRef.current = pose.clone();
 
-            model.position.copy(position);
-            model.quaternion.copy(quaternion);
-
-            scene.add(model);
-            currentModelRef.current = model;
-            placementPoseRef.current = pose.clone();
-
-            setIsLoading(false);
-            setIsPlaced(true);
-            isPlacedRef.current = true;
-            setStatusMessage("");
-            onPlaced?.();
+                setIsLoading(false);
+                setIsPlaced(true);
+                isPlacedRef.current = true;
+                isLoadingRef.current = false;
+                setStatusMessage("");
+                onPlacedRef.current?.();
+            } catch (err) {
+                console.error("Failed to place model:", err);
+                isLoadingRef.current = false;
+                setIsLoading(false);
+            }
         },
-        [products, onPlaced]
+        [] // No deps — uses refs for everything
     );
 
     /**
@@ -110,8 +134,68 @@ export default function ARViewer({
      */
     useEffect(() => {
         if (!isPlacedRef.current || !placementPoseRef.current) return;
-        placeModel(currentIndex, placementPoseRef.current);
+        placeModelAtPose(placementPoseRef.current);
     }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    /**
+     * Set up touch handlers on the DOM overlay for rotation.
+     * - Short tap (< 200ms, < 10px movement) = treated as tap (handled by XR select)
+     * - Drag = rotate model around Y axis
+     */
+    useEffect(() => {
+        const overlay = overlayRef.current;
+        if (!overlay) return;
+
+        const onTouchStart = (e: TouchEvent) => {
+            // Don't intercept touches on UI elements (carousel buttons, close button etc.)
+            const target = e.target as HTMLElement;
+            if (target.closest("button") || target.closest("[data-carousel]")) return;
+
+            touchStartRef.current = {
+                x: e.touches[0].clientX,
+                y: e.touches[0].clientY,
+                time: Date.now(),
+            };
+            isTapRef.current = true;
+        };
+
+        const onTouchMove = (e: TouchEvent) => {
+            if (!touchStartRef.current || !currentModelRef.current) return;
+
+            const dx = e.touches[0].clientX - touchStartRef.current.x;
+            const dy = e.touches[0].clientY - touchStartRef.current.y;
+
+            // If moved more than 10px, it's a drag not a tap
+            if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+                isTapRef.current = false;
+            }
+
+            // Rotate model — horizontal drag = Y rotation
+            if (!isTapRef.current && currentModelRef.current) {
+                // Sensitivity: 1px drag = 0.5 degrees
+                const rotationSpeed = 0.008;
+                currentModelRef.current.rotation.y += dx * rotationSpeed;
+
+                // Update start position for continuous rotation
+                touchStartRef.current.x = e.touches[0].clientX;
+                touchStartRef.current.y = e.touches[0].clientY;
+            }
+        };
+
+        const onTouchEnd = () => {
+            touchStartRef.current = null;
+        };
+
+        overlay.addEventListener("touchstart", onTouchStart, { passive: true });
+        overlay.addEventListener("touchmove", onTouchMove, { passive: true });
+        overlay.addEventListener("touchend", onTouchEnd, { passive: true });
+
+        return () => {
+            overlay.removeEventListener("touchstart", onTouchStart);
+            overlay.removeEventListener("touchmove", onTouchMove);
+            overlay.removeEventListener("touchend", onTouchEnd);
+        };
+    }, [overlayRef]);
 
     /**
      * Initialize Three.js scene and WebXR session
@@ -126,6 +210,7 @@ export default function ARViewer({
 
         // Reset placement state on fresh mount
         isPlacedRef.current = false;
+        isLoadingRef.current = false;
         setIsPlaced(false);
         placementPoseRef.current = null;
         currentModelRef.current = null;
@@ -137,7 +222,6 @@ export default function ARViewer({
                 setStatusMessage("WebXR not supported on this device");
                 setIsLoading(false);
                 onError?.("WebXR is not supported on this browser. Please try on an AR-capable mobile device (Android Chrome).");
-                // Auto-close after showing message
                 setTimeout(() => { if (!cleanedUpRef.current) onClose(); }, 3000);
                 return;
             }
@@ -180,20 +264,17 @@ export default function ARViewer({
 
             const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
             directionalLight.position.set(2, 5, 3);
-            // No shadows in AR — camera feed is the background, shadows aren't visible
             scene.add(directionalLight);
 
             // --- Renderer (optimized for mobile AR) ---
             const renderer = new THREE.WebGLRenderer({
-                antialias: false,      // MSAA is very expensive on mobile
+                antialias: false,
                 alpha: true,
                 powerPreference: "high-performance",
             });
-            // Cap pixel ratio — phones report 3-4x which renders millions of extra pixels
             renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
             renderer.setSize(window.innerWidth, window.innerHeight);
             renderer.xr.enabled = true;
-            // No shadow maps — saves significant GPU per frame
 
             if (containerRef.current && !cleanedUpRef.current) {
                 containerRef.current.appendChild(renderer.domElement);
@@ -218,10 +299,10 @@ export default function ARViewer({
             // --- Tap to Place / Reposition ---
             const controller = renderer.xr.getController(0);
             controller.addEventListener("select", () => {
-                if (reticle.visible) {
+                // Only place if reticle is visible AND it was a tap (not a drag)
+                if (reticle.visible && isTapRef.current !== false) {
                     const pose = new THREE.Matrix4().fromArray(reticle.matrix.elements);
-                    // Always use the latest currentIndex from the ref
-                    placeModel(currentIndexRef.current, pose);
+                    placeModelAtPose(pose);
                 }
             });
             scene.add(controller);
@@ -251,7 +332,6 @@ export default function ARViewer({
 
                 sessionRef.current = session;
 
-                // Set the XR session on the renderer (Three.js handles reference space internally)
                 try {
                     await renderer.xr.setSession(session);
                 } catch (refErr: any) {
@@ -272,7 +352,7 @@ export default function ARViewer({
                     }
                 });
 
-                // --- Set up hit-test source ONCE here (not in animation loop) ---
+                // --- Set up hit-test source ---
                 try {
                     const viewerSpace = await session.requestReferenceSpace("viewer");
                     if (session.requestHitTestSource) {
@@ -283,7 +363,6 @@ export default function ARViewer({
                     }
                 } catch (hitErr) {
                     console.warn("Hit-test source setup failed:", hitErr);
-                    // Non-fatal: AR will work but surface detection won't
                 }
 
                 setIsLoading(false);
@@ -305,27 +384,24 @@ export default function ARViewer({
                 if (frame) {
                     const refSpace = renderer.xr.getReferenceSpace();
 
-                    if (refSpace) {
-                        // ALWAYS show reticle — even after placement
-                        // This lets users tap to reposition the model
-                        if (hitTestSourceRef.current) {
-                            try {
-                                const hitTestResults = frame.getHitTestResults(
-                                    hitTestSourceRef.current
-                                );
-                                if (hitTestResults.length > 0) {
-                                    const hit = hitTestResults[0];
-                                    const pose = hit.getPose(refSpace);
-                                    if (pose) {
-                                        reticle.visible = true;
-                                        reticle.matrix.fromArray(pose.transform.matrix);
-                                    }
-                                } else {
-                                    reticle.visible = false;
+                    if (refSpace && hitTestSourceRef.current) {
+                        // ALWAYS show reticle — even after placement for repositioning
+                        try {
+                            const hitTestResults = frame.getHitTestResults(
+                                hitTestSourceRef.current
+                            );
+                            if (hitTestResults.length > 0) {
+                                const hit = hitTestResults[0];
+                                const pose = hit.getPose(refSpace);
+                                if (pose) {
+                                    reticle.visible = true;
+                                    reticle.matrix.fromArray(pose.transform.matrix);
                                 }
-                            } catch {
+                            } else {
                                 reticle.visible = false;
                             }
+                        } catch {
+                            reticle.visible = false;
                         }
                     }
                 }
@@ -344,43 +420,55 @@ export default function ARViewer({
 
         checkAndStart();
 
-        // --- Cleanup ---
+        // --- Cleanup (safe order to prevent Chrome crash) ---
         return () => {
             cleanedUpRef.current = true;
-            sessionStartedRef.current = false;
 
-            // Reset placement state for next open
-            isPlacedRef.current = false;
+            const renderer = rendererRef.current;
 
+            // 1. Stop animation loop FIRST
+            if (renderer) {
+                renderer.setAnimationLoop(null);
+            }
+
+            // 2. End XR session (async, but we don't await — just fire and forget)
             if (sessionRef.current) {
-                sessionRef.current.end().catch(() => { });
+                try {
+                    sessionRef.current.end().catch(() => { });
+                } catch { }
                 sessionRef.current = null;
             }
 
-            const renderer = rendererRef.current;
-            if (renderer) {
-                renderer.setAnimationLoop(null);
+            // 3. Reset refs
+            sessionStartedRef.current = false;
+            isPlacedRef.current = false;
+            hitTestSourceRef.current = null;
+            currentModelRef.current = null;
 
-                sceneRef.current?.traverse((object) => {
-                    if ((object as THREE.Mesh).isMesh) {
-                        const mesh = object as THREE.Mesh;
-                        mesh.geometry?.dispose();
-                        if (Array.isArray(mesh.material)) {
-                            mesh.material.forEach((m) => m.dispose());
-                        } else {
-                            mesh.material?.dispose();
+            // 4. Dispose Three.js resources after a small delay to let XR session end
+            setTimeout(() => {
+                if (renderer) {
+                    sceneRef.current?.traverse((object) => {
+                        if ((object as THREE.Mesh).isMesh) {
+                            const mesh = object as THREE.Mesh;
+                            mesh.geometry?.dispose();
+                            if (Array.isArray(mesh.material)) {
+                                mesh.material.forEach((m) => m.dispose());
+                            } else {
+                                mesh.material?.dispose();
+                            }
                         }
-                    }
-                });
+                    });
 
-                renderer.dispose();
+                    renderer.dispose();
 
-                if (containerRef.current?.contains(renderer.domElement)) {
-                    containerRef.current.removeChild(renderer.domElement);
+                    try {
+                        if (containerRef.current?.contains(renderer.domElement)) {
+                            containerRef.current.removeChild(renderer.domElement);
+                        }
+                    } catch { }
                 }
-            }
-
-            // NOTE: Do NOT clear global cache here — it persists for instant re-loads
+            }, 100);
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

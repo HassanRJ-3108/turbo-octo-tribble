@@ -131,22 +131,24 @@ export default function ARProductCarousel({
                     {/* Thumbnails */}
                     <div
                         ref={scrollRef}
+                        data-carousel
                         className="flex-1 flex gap-2 overflow-x-auto scrollbar-hide py-1"
                         style={{ scrollbarWidth: "none" }}
                     >
                         {products.map((product, idx) => {
                             const hasAR = !!product.ar_model?.file_url;
-                            const thumb = product.media?.images?.[0];
+                            // Prefer AR model thumbnail, then product images
+                            const thumb = product.ar_model?.thumbnail_url || product.media?.images?.[0];
                             return (
                                 <button
                                     key={product.id}
                                     onClick={() => hasAR && onProductChange(idx)}
                                     disabled={!hasAR}
                                     className={`shrink-0 w-16 h-16 rounded-xl overflow-hidden border-2 transition-all ${idx === currentIndex
-                                            ? "border-amber-400 scale-110 shadow-lg shadow-amber-400/30"
-                                            : hasAR
-                                                ? "border-white/20 hover:border-white/50"
-                                                : "border-white/10 opacity-40"
+                                        ? "border-amber-400 scale-110 shadow-lg shadow-amber-400/30"
+                                        : hasAR
+                                            ? "border-white/20 hover:border-white/50"
+                                            : "border-white/10 opacity-40"
                                         }`}
                                 >
                                     {thumb ? (
