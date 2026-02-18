@@ -2,9 +2,9 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Product } from "@/lib/types";
+import { loadModel } from "@/lib/modelCache";
 
 /**
  * FullScreen3DViewer — fallback for devices without AR support
@@ -13,7 +13,7 @@ import type { Product } from "@/lib/types";
  * - Touch rotation (OrbitControls)
  * - Auto-rotate for showcase effect
  * - Product switching via external index
- * - Lightweight for mobile
+ * - Uses global model cache for instant re-loads
  */
 
 interface FullScreen3DViewerProps {
@@ -33,8 +33,6 @@ export default function FullScreen3DViewer({
     const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
     const controlsRef = useRef<OrbitControls | null>(null);
     const currentModelRef = useRef<THREE.Group | null>(null);
-    const loaderRef = useRef<GLTFLoader>(new GLTFLoader());
-    const modelCacheRef = useRef<Map<string, THREE.Group>>(new Map());
     const cleanedUpRef = useRef(false);
     const animFrameRef = useRef<number>(0);
 
@@ -48,9 +46,6 @@ export default function FullScreen3DViewer({
             const product = products[productIndex];
             if (!product?.ar_model?.file_url) return;
 
-            const arModel = product.ar_model;
-            const cacheKey = arModel.id || arModel.file_url;
-
             setIsLoading(true);
 
             // Remove old model
@@ -59,33 +54,25 @@ export default function FullScreen3DViewer({
                 currentModelRef.current = null;
             }
 
-            let model: THREE.Group;
+            // Load from global cache (instant if already loaded)
+            const model = await loadModel(product);
 
-            if (modelCacheRef.current.has(cacheKey)) {
-                model = modelCacheRef.current.get(cacheKey)!.clone();
-            } else {
-                try {
-                    const gltf = await loaderRef.current.loadAsync(arModel.file_url);
-                    model = gltf.scene;
-                    modelCacheRef.current.set(cacheKey, model.clone());
-                } catch (err) {
-                    console.error("Failed to load model:", err);
-                    setIsLoading(false);
-                    return;
-                }
+            if (!model || cleanedUpRef.current) {
+                setIsLoading(false);
+                return;
             }
 
-            if (cleanedUpRef.current) return;
-
-            // Normalize: fit model into a ~1.5 unit box
+            // For 3D viewer: normalize to fit in ~1.5 unit box (override AR real-world scale)
             const box = new THREE.Box3().setFromObject(model);
             const size = new THREE.Vector3();
             box.getSize(size);
             const maxDim = Math.max(size.x, size.y, size.z);
-            const scale = maxDim > 0 ? 1.5 / maxDim : 1;
-            model.scale.setScalar(scale);
+            if (maxDim > 0) {
+                const viewerScale = 1.5 / maxDim;
+                model.scale.multiplyScalar(viewerScale);
+            }
 
-            // Center at origin, sit on ground
+            // Re-center after rescaling
             const scaledBox = new THREE.Box3().setFromObject(model);
             const center = new THREE.Vector3();
             scaledBox.getCenter(center);
@@ -95,7 +82,7 @@ export default function FullScreen3DViewer({
             scene.add(model);
             currentModelRef.current = model;
 
-            // Adjust camera to frame model
+            // Reset camera to frame model
             if (cameraRef.current && controlsRef.current) {
                 cameraRef.current.position.set(0, 1.2, 2.5);
                 controlsRef.current.target.set(0, 0.5, 0);
@@ -194,7 +181,7 @@ export default function FullScreen3DViewer({
         // Load initial model
         loadAndShowModel(currentIndex);
 
-        // Cleanup
+        // Cleanup — don't clear global cache, just clean up local Three.js objects
         return () => {
             cleanedUpRef.current = true;
             cancelAnimationFrame(animFrameRef.current);
@@ -217,7 +204,7 @@ export default function FullScreen3DViewer({
             if (containerRef.current?.contains(renderer.domElement)) {
                 containerRef.current.removeChild(renderer.domElement);
             }
-            modelCacheRef.current.clear();
+            // NOTE: Do NOT clear global cache here — it persists for instant re-loads
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

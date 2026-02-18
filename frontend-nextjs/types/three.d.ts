@@ -14,3 +14,7 @@ declare module "three/addons/controls/OrbitControls.js" {
 declare module "three/addons/webxr/ARButton.js" {
     export { ARButton } from "three/examples/jsm/webxr/ARButton.js";
 }
+
+declare module "three/addons/loaders/DRACOLoader.js" {
+    export { DRACOLoader } from "three/examples/jsm/loaders/DRACOLoader.js";
+}

@@ -8,6 +8,7 @@ import Link from "next/link";
 import { X, Zap, View, Smartphone } from "lucide-react";
 import type { PublicMenu, Product } from "@/lib/types";
 import dynamic from "next/dynamic";
+import { prefetchModels, preloadModel } from "@/lib/modelCache";
 
 // Dynamic imports (client-only, no SSR)
 const ModelViewer = dynamic(() => import("@/components/ModelViewer"), {
@@ -91,6 +92,19 @@ export default function PublicMenuPage() {
       (p) => p.ar_model?.file_url || p.ar_model_id
     );
   }, [menu?.products]);
+
+  // Pre-fetch model files in background (HTTP cache) as soon as menu loads
+  useEffect(() => {
+    if (arProducts.length > 0) {
+      // Step 1: Pre-fetch all model files at HTTP level (low priority)
+      prefetchModels(arProducts);
+
+      // Step 2: Fully pre-load the first product (parsed + scaled, ready for instant AR)
+      preloadModel(arProducts[0]).then((success) => {
+        if (success) console.log("[Menu] First model pre-loaded and ready");
+      });
+    }
+  }, [arProducts]);
 
   // Enter AR mode
   const enterAR = (product?: Product) => {

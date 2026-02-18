@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useCallback, useState } from "react";
 import * as THREE from "three";
-import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 import type { Product } from "@/lib/types";
+import { loadModel as loadModelFromCache } from "@/lib/modelCache";
 
 /**
  * ARViewer Component
@@ -42,8 +42,6 @@ export default function ARViewer({
     const reticleRef = useRef<THREE.Mesh | null>(null);
     const currentModelRef = useRef<THREE.Group | null>(null);
     const placementPoseRef = useRef<THREE.Matrix4 | null>(null);
-    const loaderRef = useRef<GLTFLoader>(new GLTFLoader());
-    const modelCacheRef = useRef<Map<string, THREE.Group>>(new Map());
     const cleanedUpRef = useRef(false);
     const sessionStartedRef = useRef(false);
     const isPlacedRef = useRef(false);
@@ -51,61 +49,6 @@ export default function ARViewer({
     const [isPlaced, setIsPlaced] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [statusMessage, setStatusMessage] = useState("Initializing AR...");
-
-    /**
-     * Load a GLB model and return a cloned Three.js Group
-     * Dimensions are converted from cm to meters for real-world scale
-     */
-    const loadModel = useCallback(
-        async (product: Product): Promise<THREE.Group | null> => {
-            const arModel = product.ar_model;
-            if (!arModel?.file_url) return null;
-
-            const cacheKey = arModel.id || arModel.file_url;
-
-            // Return cached model (clone it)
-            if (modelCacheRef.current.has(cacheKey)) {
-                return modelCacheRef.current.get(cacheKey)!.clone();
-            }
-
-            try {
-                const gltf = await loaderRef.current.loadAsync(arModel.file_url);
-                const model = gltf.scene;
-
-                // Calculate bounding box to get model's intrinsic size
-                const box = new THREE.Box3().setFromObject(model);
-                const modelSize = new THREE.Vector3();
-                box.getSize(modelSize);
-
-                // Target dimensions in meters (backend stores cm)
-                const targetHeight = (arModel.height || 10) / 100;
-                const targetWidth = (arModel.width || 10) / 100;
-                const targetDepth = (arModel.depth || 10) / 100;
-
-                // Scale per-axis to match real-world dimensions
-                const scaleX = modelSize.x > 0 ? targetWidth / modelSize.x : 1;
-                const scaleY = modelSize.y > 0 ? targetHeight / modelSize.y : 1;
-                const scaleZ = modelSize.z > 0 ? targetDepth / modelSize.z : 1;
-
-                model.scale.set(scaleX, scaleY, scaleZ);
-
-                // Center the model at its base (sit on surface)
-                const scaledBox = new THREE.Box3().setFromObject(model);
-                const center = new THREE.Vector3();
-                scaledBox.getCenter(center);
-                model.position.sub(center);
-                model.position.y -= scaledBox.min.y;
-
-                // Cache the original
-                modelCacheRef.current.set(cacheKey, model.clone());
-                return model;
-            } catch (err) {
-                console.error("Failed to load GLB model:", err);
-                return null;
-            }
-        },
-        []
-    );
 
     /**
      * Place or replace the current model in the scene
@@ -127,7 +70,7 @@ export default function ARViewer({
             setIsLoading(true);
             setStatusMessage("Loading model...");
 
-            const model = await loadModel(product);
+            const model = await loadModelFromCache(product);
             if (!model || !scene || cleanedUpRef.current) return;
 
             // Apply placement pose
@@ -149,7 +92,7 @@ export default function ARViewer({
             setStatusMessage("");
             onPlaced?.();
         },
-        [products, loadModel, onPlaced]
+        [products, onPlaced]
     );
 
     /**
