@@ -129,3 +129,76 @@ def get_thumbnail_url(
         quality="auto",
         fetch_format="auto",
     )
+
+
+def upload_3d_model(
+    file_bytes: bytes, restaurant_id: str, model_id: str, filename: str
+) -> dict:
+    """
+    Upload 3D model file to Cloudinary as a raw asset.
+
+    Cloudinary treats GLB/GLTF/USDZ as raw resource types.
+
+    Args:
+        file_bytes: 3D model file content as bytes
+        restaurant_id: Restaurant UUID for folder organization
+        model_id: Model UUID for unique public_id
+        filename: Original filename
+
+    Returns:
+        dict: {"url": str, "public_id": str, "storage_path": str}
+
+    Raises:
+        Exception: If upload fails
+    """
+    try:
+        # Use the filename extension for the public_id
+        result = cloudinary.uploader.upload(
+            file_bytes,
+            folder=f"foodar/{restaurant_id}/models",
+            public_id=model_id,
+            resource_type="raw",
+            # Keep original format (GLB, GLTF, USDZ)
+            use_filename=False,
+            unique_filename=False,
+        )
+        return {
+            "url": result["secure_url"],
+            "public_id": result["public_id"],
+            "storage_path": f"cloudinary:{result['public_id']}",
+        }
+    except Exception as e:
+        print(f"Failed to upload 3D model to Cloudinary: {e}")
+        raise
+
+
+def upload_thumbnail(
+    file_bytes: bytes, restaurant_id: str, model_id: str
+) -> dict:
+    """
+    Upload model thumbnail image to Cloudinary.
+
+    Args:
+        file_bytes: Thumbnail image content as bytes
+        restaurant_id: Restaurant UUID for folder organization
+        model_id: Model UUID for unique naming
+
+    Returns:
+        dict: {"url": str, "public_id": str}
+    """
+    try:
+        result = cloudinary.uploader.upload(
+            file_bytes,
+            folder=f"foodar/{restaurant_id}/thumbnails",
+            public_id=f"thumb_{model_id}",
+            resource_type="image",
+            transformation=[
+                {"width": 400, "height": 400, "crop": "limit"},
+                {"quality": "auto"},
+                {"fetch_format": "auto"},
+            ],
+        )
+        return {"url": result["secure_url"], "public_id": result["public_id"]}
+    except Exception as e:
+        print(f"Failed to upload thumbnail to Cloudinary: {e}")
+        raise

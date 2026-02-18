@@ -29,6 +29,9 @@ class Models3D(Base):
     storage_path: Mapped[str] = mapped_column(String(500), nullable=False)
     file_url: Mapped[str] = mapped_column(Text, nullable=False)
     thumbnail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    storage_provider: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="supabase"
+    )  # "supabase" or "cloudinary"
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # Physical dimensions for true-to-scale AR rendering

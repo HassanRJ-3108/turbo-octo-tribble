@@ -32,6 +32,7 @@ class Model3DRead(Model3DBase):
     storage_path: str
     file_url: str
     thumbnail_url: str | None
+    storage_provider: str = "supabase"
     height: float | None = None
     width: float | None = None
     depth: float | None = None

@@ -362,7 +362,7 @@ export default function ARViewer({
                 }
             }
 
-            modelCacheRef.current.clear();
+            // NOTE: Do NOT clear global cache here — it persists for instant re-loads
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

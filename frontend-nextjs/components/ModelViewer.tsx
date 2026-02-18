@@ -5,6 +5,7 @@ import useSWR from "swr";
 import axios from "axios";
 import * as THREE from "three";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+import { DRACOLoader } from "three/addons/loaders/DRACOLoader.js";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import type { Model3D, ARModel } from "@/lib/types";
 
@@ -115,6 +116,12 @@ export default function ModelViewer({ modelId, modelData }: ModelViewerProps) {
 
     // --- Load Model ---
     const loader = new GLTFLoader();
+
+    // Attach Draco decoder for compressed models
+    const dracoLoader = new DRACOLoader();
+    dracoLoader.setDecoderPath("https://www.gstatic.com/draco/versioned/decoders/1.5.7/");
+    loader.setDRACOLoader(dracoLoader);
+
     loader.load(
       model.file_url,
       (gltf) => {

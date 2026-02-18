@@ -2,12 +2,14 @@
 3D Models API Endpoints
 
 Handles 3D model uploads, listing, and deletion.
+Supports both Supabase and Cloudinary storage providers.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+from typing import Optional
 
 from app.api.deps import get_db, get_current_user, require_active_subscription
 from app.schemas.model_3d import Model3DRead
@@ -15,9 +17,14 @@ from app.models.user import User
 from app.models.restaurant import Restaurant
 from app.models.model_3d import Models3D
 from app.services.supabase_storage import (
-    upload_3d_model,
+    upload_3d_model as supabase_upload_3d_model,
     generate_signed_url,
-    delete_3d_model,
+    delete_3d_model as supabase_delete_3d_model,
+)
+from app.services.cloudinary_service import (
+    upload_3d_model as cloudinary_upload_3d_model,
+    upload_thumbnail,
+    delete_asset,
 )
 from app.utils.validators import validate_3d_model
 
@@ -33,10 +40,12 @@ async def create_3d_model(
     width: float | None = Form(None),
     depth: float | None = Form(None),
     dimension_unit: str = Form("cm"),
+    storage_provider: str = Form("supabase"),
+    thumbnail: Optional[UploadFile] = File(None),
     current_user: str = Depends(require_active_subscription),
     db: AsyncSession = Depends(get_db),
 ) -> Models3D:
-    """Upload 3D model to Supabase Storage (requires active subscription)"""
+    """Upload 3D model to Supabase or Cloudinary (requires active subscription)"""
     # Get user and restaurant
     result = await db.execute(
         select(User).where(User.clerk_user_id == current_user)
@@ -62,13 +71,31 @@ async def create_3d_model(
     import uuid
     model_id = uuid.uuid4()
 
-    # Upload to Supabase Storage FIRST
-    storage_path = upload_3d_model(
-        file_bytes, str(restaurant.id), str(model_id), file.filename
-    )
-    file_url = generate_signed_url(storage_path)
+    # Upload based on storage provider
+    if storage_provider == "cloudinary":
+        # Upload to Cloudinary
+        upload_result = cloudinary_upload_3d_model(
+            file_bytes, str(restaurant.id), str(model_id), file.filename
+        )
+        storage_path = upload_result["storage_path"]
+        file_url = upload_result["url"]
+    else:
+        # Upload to Supabase Storage (default)
+        storage_path = supabase_upload_3d_model(
+            file_bytes, str(restaurant.id), str(model_id), file.filename
+        )
+        file_url = generate_signed_url(storage_path)
 
-    # Now create model record with all required fields
+    # Upload thumbnail if provided (always to Cloudinary)
+    thumbnail_url = None
+    if thumbnail:
+        thumb_bytes = await thumbnail.read()
+        thumb_result = upload_thumbnail(
+            thumb_bytes, str(restaurant.id), str(model_id)
+        )
+        thumbnail_url = thumb_result["url"]
+
+    # Create model record
     model = Models3D(
         id=model_id,
         restaurant_id=restaurant.id,
@@ -76,6 +103,8 @@ async def create_3d_model(
         description=description,
         storage_path=storage_path,
         file_url=file_url,
+        thumbnail_url=thumbnail_url,
+        storage_provider=storage_provider,
         height=height,
         width=width,
         depth=depth,
@@ -129,8 +158,9 @@ async def get_3d_model(
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    # Refresh signed URL
-    model.file_url = generate_signed_url(model.storage_path)
+    # Refresh signed URL only for Supabase models
+    if model.storage_provider == "supabase":
+        model.file_url = generate_signed_url(model.storage_path)
     return model
 
 
@@ -148,8 +178,19 @@ async def delete_3d_model_endpoint(
     if not model:
         raise HTTPException(status_code=404, detail="Model not found")
 
-    # Delete from Storage
-    delete_3d_model(model.storage_path)
+    # Delete from storage based on provider
+    if model.storage_provider == "cloudinary":
+        # Extract public_id from storage_path (format: "cloudinary:public_id")
+        public_id = model.storage_path.replace("cloudinary:", "")
+        delete_asset(public_id, resource_type="raw")
+    else:
+        supabase_delete_3d_model(model.storage_path)
+
+    # Delete thumbnail from Cloudinary if exists
+    if model.thumbnail_url:
+        # Thumbnail public_id follows pattern: foodar/{restaurant_id}/thumbnails/thumb_{model_id}
+        thumb_public_id = f"foodar/{model.restaurant_id}/thumbnails/thumb_{model.id}"
+        delete_asset(thumb_public_id, resource_type="image")
 
     # Delete from DB
     await db.delete(model)
