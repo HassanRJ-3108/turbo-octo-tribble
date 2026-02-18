@@ -73,8 +73,16 @@ async def get_public_menu(
     for p in products:
         product_data = ProductPublic.model_validate(p)
         if p.ar_model:
-            # Generate fresh signed URL
-            file_url = generate_signed_url(p.ar_model.storage_path)
+            # Only refresh signed URL for Supabase models
+            # Cloudinary URLs are permanent and don't need signing
+            try:
+                if getattr(p.ar_model, 'storage_provider', 'supabase') == 'supabase':
+                    file_url = generate_signed_url(p.ar_model.storage_path)
+                else:
+                    file_url = p.ar_model.file_url
+            except Exception as e:
+                print(f"⚠️ Failed to get URL for model {p.ar_model.id}: {e}")
+                file_url = p.ar_model.file_url  # Fallback to stored URL
             
             # Create ARModelPublic manually to override file_url
             ar_model_data = ARModelPublic(

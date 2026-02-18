@@ -13,6 +13,7 @@ import { loadModel as loadModelFromCache } from "@/lib/modelCache";
  * - Renders reticle on detected surfaces (hit-test)
  * - Places GLB 3D models at real-world scale
  * - Supports product switching without restarting session
+ * - Tap anywhere to reposition (model moves to new surface point)
  * - No pinch-to-zoom (models are real-world size only)
  */
 
@@ -44,11 +45,19 @@ export default function ARViewer({
     const placementPoseRef = useRef<THREE.Matrix4 | null>(null);
     const cleanedUpRef = useRef(false);
     const sessionStartedRef = useRef(false);
+
+    // Use refs for values that need to be current inside XR callbacks
+    const currentIndexRef = useRef(currentIndex);
     const isPlacedRef = useRef(false);
 
     const [isPlaced, setIsPlaced] = useState(false);
     const [isLoading, setIsLoading] = useState(true);
     const [statusMessage, setStatusMessage] = useState("Initializing AR...");
+
+    // Keep currentIndexRef in sync with prop
+    useEffect(() => {
+        currentIndexRef.current = currentIndex;
+    }, [currentIndex]);
 
     /**
      * Place or replace the current model in the scene
@@ -100,7 +109,7 @@ export default function ARViewer({
      * Reuses the same placement position
      */
     useEffect(() => {
-        if (!isPlaced || !placementPoseRef.current) return;
+        if (!isPlacedRef.current || !placementPoseRef.current) return;
         placeModel(currentIndex, placementPoseRef.current);
     }, [currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -114,6 +123,12 @@ export default function ARViewer({
         if (sessionStartedRef.current) return;
         sessionStartedRef.current = true;
         cleanedUpRef.current = false;
+
+        // Reset placement state on fresh mount
+        isPlacedRef.current = false;
+        setIsPlaced(false);
+        placementPoseRef.current = null;
+        currentModelRef.current = null;
 
         // --- Check AR Support First ---
         const checkAndStart = async () => {
@@ -200,12 +215,13 @@ export default function ARViewer({
             scene.add(reticle);
             reticleRef.current = reticle;
 
-            // --- Tap to Place ---
+            // --- Tap to Place / Reposition ---
             const controller = renderer.xr.getController(0);
             controller.addEventListener("select", () => {
                 if (reticle.visible) {
                     const pose = new THREE.Matrix4().fromArray(reticle.matrix.elements);
-                    placeModel(currentIndex, pose);
+                    // Always use the latest currentIndex from the ref
+                    placeModel(currentIndexRef.current, pose);
                 }
             });
             scene.add(controller);
@@ -290,8 +306,9 @@ export default function ARViewer({
                     const refSpace = renderer.xr.getReferenceSpace();
 
                     if (refSpace) {
-                        // Update reticle from hit-test (only before first placement)
-                        if (hitTestSourceRef.current && !isPlacedRef.current) {
+                        // ALWAYS show reticle — even after placement
+                        // This lets users tap to reposition the model
+                        if (hitTestSourceRef.current) {
                             try {
                                 const hitTestResults = frame.getHitTestResults(
                                     hitTestSourceRef.current
@@ -309,8 +326,6 @@ export default function ARViewer({
                             } catch {
                                 reticle.visible = false;
                             }
-                        } else {
-                            reticle.visible = false;
                         }
                     }
                 }
@@ -333,6 +348,9 @@ export default function ARViewer({
         return () => {
             cleanedUpRef.current = true;
             sessionStartedRef.current = false;
+
+            // Reset placement state for next open
+            isPlacedRef.current = false;
 
             if (sessionRef.current) {
                 sessionRef.current.end().catch(() => { });
